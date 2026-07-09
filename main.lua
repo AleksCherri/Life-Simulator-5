@@ -1,6 +1,8 @@
 local MAP_WIDTH = 10
 local MAP_HEIGHT = 10
 
+local DAY_DURATION = 1024
+local SUN_MIN, SUN_MAX = 0.0, 1.0
 local MINERALS_MIN, MINERALS_MAX = 0, 256
 
 local Ai = require('ai_module')
@@ -25,11 +27,25 @@ end
 
 function game.load()
     Map:init()
+    imgx = 400
+    imgy = 300
+    mousePressed = false
 end
 
 function game.update(dt)
+    if mousePressed then
+        imgx, imgy = game.mouse.getPosition()
+    end
 end
 
 function game.draw()
-    game.graphics.print('meh', 400, 300)
+    game.graphics.print('meh', imgx, imgy)
+end
+
+function game.mousepressed(x, y, button, istouch)
+    mousePressed = true
+end
+
+function game.mousereleased(x, y, button, istouch)
+    mousePressed = false
 end
