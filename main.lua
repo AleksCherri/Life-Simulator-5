@@ -54,7 +54,8 @@ function love.load()
 
     function removeCell(cell)
         if Map[cell.idx] then Map[cell.idx] = nil else return false end
-        cell_batch:set(cell.idx, 0, 0, 0, 0, 0)
+        cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
+        cell_batch:set(cell.idx, cell_sprites[0], cell.x, cell.y, 0, 0.125, 0.125, 4, 4)
         cell_counter = cell_counter - 1
         return true
     end
@@ -69,7 +70,12 @@ function love.load()
 
     function initCellBatch()
         cell_batch:clear()
-        for _ = 1, Map.size do cell_batch:add(cell_sprites[1], 0, 0, 0, 0) end
+        cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
+        for y = 1, MAP_HEIGHT do 
+            for x = 1, MAP_WIDTH do    
+                cell_batch:add(cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
+            end
+        end
     end
 
     function initCell(type, x, y, direction)
@@ -99,7 +105,7 @@ function love.load()
     cell_atlas = love.graphics.newImage('cell_sprites.png')
     cell_atlas:setFilter('nearest')
     cell_sprites = {}
-    for i = 1, 6 do cell_sprites[i] = love.graphics.newQuad(8 * (i - 1), 0, 8, 8, cell_atlas) end
+    for i = 0, 6 do cell_sprites[i] = love.graphics.newQuad(8 * i, 0, 8, 8, cell_atlas) end
     cell_batch = love.graphics.newSpriteBatch(cell_atlas, Map.size)
     initCellBatch()
 
@@ -171,10 +177,12 @@ function love.draw()
 end
 
 function love.mousepressed(x, y, button, istouch)
-    if button == 1 then is_mouse_pressed = true end
-    target_cell.x = highlight_x
-    target_cell.y = highlight_y
-    target_cell.cell = Map[pos2idx(highlight_x, highlight_y)]
+    if button == 1 then is_mouse_pressed = true
+    elseif button == 2 then
+        target_cell.x = highlight_x
+        target_cell.y = highlight_y
+        target_cell.cell = Map[pos2idx(highlight_x, highlight_y)]
+    end
 end
 
 function love.mousereleased(x, y, button, istouch)
