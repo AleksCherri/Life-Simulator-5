@@ -1,9 +1,23 @@
--- NEEDS REFACTORING
-
-local rand = math.random
 local M = {}
+local rand = math.random
+local AI = {}
+AI.__index = AI
 
--- Weights are stored as a table idxth the folloidxng structure: (bias, threshold, diactivation constant, N connection weights to next layer) - for each node
+function AI.new(layers, weights, mult)
+    if mult == nil then mult = 100.0 end
+    if weights == nil then weights = M.genWeights(layers, mult) end
+    return setmetatable({
+        layers = layers,
+        nLayers = #layers,
+        weights = weights
+    }, AI)
+end
+
+function M.genAi(layers, weights, mult)
+    return AI.new(layers, weights, mult)
+end
+
+-- Weights are stored as a table with the following structure: (bias, threshold, diactivation constant, N connection weights to next layer) - for each node
 function M.genWeights(layers, mult)
     local scale = mult * 2
     local weights, idx = {}, 1
@@ -20,38 +34,48 @@ function M.genWeights(layers, mult)
     return weights
 end
 
-function M.mutate(weights, mult)
+function AI:mutate(mult)
+    if mult == nil then mult = 0.1 end
+    local nW = #self.weights
     local scale = mult * 2
 
-    for _ = 1, rand(1, #weights) do
-        local idx = rand(1, #weights)
-        weights[idx] = weights[idx] + (rand() - 0.5) * scale
+    for _ = 1, rand(1, nW) do
+        local idx = rand(1, nW)
+        self.weights[idx] = self.weights[idx] + (rand() - 0.5) * scale
     end
-
-    return weights
 end
 
-function M.act(layers, weights, data)
-    local idx, new_data = 1, {}
+function AI:act(data)
+    local layers, len, weights = self
+    local idx, offset = 1, 0
 
-    for i = 2, #layers do
-        new_data = {}
-        local layer = layers[i]
-        for j = 1, layers[i-1] do
-            local value = data[j] + weights[idx]
-            if value <= weights[idx+1] then
-                value = weights[idx+2]
+    for i = 2, len do
+        local layer, prev_layer = layers[i], layers[i - 1]
+        local next_offset = offset + prev_layer
+        for j = 1, prev_layer do
+            -- Calculating bias value
+            if data[j + offset] then local bias = data[j + offset] else local bias = 0.0 end
+            local value = bias + weigths[idx]
+            if value <= weights[idx + 1] then
+                value = weights[idx + 2]
             end
+
+            -- Applying weights to the following nodes
             for k = 1, layer do
-                if new_data[k] == nil then new_data[k] = 0.0 end
-                new_data[k] = new_data[k] + value * weights[idx+k+2]
+                local ofs = next_offset + k
+                if data[ofs] then local bias = data[ofs] else local bias = 0.0 end
+                data[ofs] = bias + value * weights[idx + k + 2]
             end
             idx = idx + layer + 3
+            offset = next_offset
         end
-        data = new_data
     end
 
-    return data
+    local result = {}
+    for i = 1, layers[len] do
+        result[i] = data[offset + i]
+    end
+    return result
 end
 
 return M
