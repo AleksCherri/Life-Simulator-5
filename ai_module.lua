@@ -46,7 +46,7 @@ function AI:mutate(mult)
 end
 
 function AI:act(data)
-    local layers, len, weights = self
+    local layers, len, weights = self.layers, self.nLayers, self.weights
     local idx, offset = 1, 0
 
     for i = 2, len do
@@ -54,8 +54,9 @@ function AI:act(data)
         local next_offset = offset + prev_layer
         for j = 1, prev_layer do
             -- Calculating bias value
-            if data[j + offset] then local bias = data[j + offset] else local bias = 0.0 end
-            local value = bias + weigths[idx]
+            local value
+            if data[j + offset] then value = data[j + offset] else value = 0.0 end
+            value = value + weights[idx]
             if value <= weights[idx + 1] then
                 value = weights[idx + 2]
             end
@@ -63,8 +64,9 @@ function AI:act(data)
             -- Applying weights to the following nodes
             for k = 1, layer do
                 local ofs = next_offset + k
-                if data[ofs] then local bias = data[ofs] else local bias = 0.0 end
-                data[ofs] = bias + value * weights[idx + k + 2]
+                local bufval
+                if data[ofs] then bufval = data[ofs] else bufval = 0.0 end
+                data[ofs] = bufval + value * weights[idx + k + 2]
             end
             idx = idx + layer + 3
             offset = next_offset
