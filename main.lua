@@ -23,6 +23,11 @@ function love.load()
 
     cell_module = require('cell_module')
 
+    function regen()
+        Map:init()
+        cell_module.regen()
+    end
+
     function pos2idx(x, y)
         return x + ((y - 1) * MAP_WIDTH)
     end
@@ -37,7 +42,6 @@ function love.load()
             self.cells[i] = nil
         end
     end
-    Map:init()
 
     local img_data = love.image.newImageData(1, 1)
     img_data:setPixel(0, 0, 1, 1, 1, 1)
@@ -49,8 +53,6 @@ function love.load()
             mineral_batch:add(0, x - 0.5, y - 0.5, 0, 0.125, 0.125, 4, 4)
         end
     end
-
-    cell_module.initCellBatch()
 
     screen_width, screen_height = LG.getDimensions()
     camera_x, camera_y, camera_zoom = (screen_width - MAP_WIDTH) / 2, (screen_height - MAP_HEIGHT) / 2, 1.0
@@ -65,6 +67,8 @@ function love.load()
     tps_threshold = 1 / TPS
     tps_timer = 0.0
     pause = true
+
+    regen()
 end
 
 function love.update(dt)
@@ -73,13 +77,7 @@ function love.update(dt)
         tps_timer = 0.0
 
         -- Main Logic
-        local cell = cell_module.initCell(
-            math.random(1, 6),
-            math.random(1, MAP_WIDTH),
-            math.random(1, MAP_HEIGHT),
-            math.random(1, 4)
-        )
-        cell_module.addCell(cell)
+        if cell_module.cell_counter <= 0 then regen() end
     end
 end
 
