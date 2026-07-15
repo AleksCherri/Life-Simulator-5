@@ -12,6 +12,39 @@ function love.load()
 
     VIEW_MODES = {'Normal', 'Energy', 'Cell Minerals', 'Map Minerals'}
 
+    local THREAD_COUNT = 3
+
+    --[[local ffi = require('ffi')
+
+    ffi.cdef[[
+        typedef struct {
+            uint8_t typ;
+            uint8_t direction;
+            uint8_t state;
+            float energy;
+            float minerals;
+            int16_t x, y;
+            int32_t genome_id
+        } CellData;
+
+        typedef struct {
+            int32_t energy_count;
+            int32_t add_count;
+            int32_t remove_count;
+
+            float energy_buffer[4096 * 3];
+            int32_t add_buffer[1024 * 4];
+            int32_t remove_buffer[1024];
+        } ThreadResult;
+    ]]
+    
+    threads = {}
+    for i = 1, THREAD_COUNT do
+        local thread = love.thread.newThread('worker.lua')
+        thread:start(i)
+        threads[i] = {thread = thread, input_ch = 'fromThread' .. i, output_ch = 'toThread' .. i}
+    end
+
     Map = {
     width = MAP_WIDTH,
     height = MAP_HEIGHT,
@@ -36,9 +69,23 @@ function love.load()
         return math.max(math.min(value, max), min)
     end
 
+    function update_minerals()
+        local sx, sy = math.max(math.floor(-camera_x / camera_zoom), 1), math.max(math.floor(-camera_y / camera_zoom), 1)
+        local w, h = math.min(math.ceil(screen_width / camera_zoom) + sx, MAP_WIDTH), math.min(math.ceil(screen_height / camera_zoom) + sy, MAP_HEIGHT)
+        for y = sy, h do
+            for x = sx, w do
+                local c
+                local idx = pos2idx(x, y)
+                if Map.minerals[idx] then c = Map.minerals[idx] / MINERALS_MAX else c = 0.0 end
+                mineral_batch:setColor(0.0, 0.0, 1.0, c)
+                mineral_batch:set(idx, x + 3.5, y + 3.5, 0, 1, 1, 4, 4)
+            end
+        end
+    end
+
     function Map:init()
         for i = 1, self.size do
-            self.minerals[i] = math.random(MINERALS_MIN, MINERALS_MAX)
+            self.minerals[i] = math.random(MINERALS_MIN, MINERALS_MAX) * i / self.size
             self.cells[i] = nil
         end
     end
@@ -78,6 +125,9 @@ function love.update(dt)
 
         -- Main Logic
         if cell_module.cell_counter <= 0 then regen() end
+        if view_mode == 3 then update_minerals() end
+
+        
     end
 end
 
@@ -92,20 +142,7 @@ function love.draw()
     LG.rectangle('fill', 0.5, 0.5, MAP_WIDTH, MAP_HEIGHT)
     LG.draw(cell_module.cell_batch)
 
-    if view_mode == 3 then
-        local sx, sy = math.max(math.floor(-camera_x / camera_zoom), 1), math.max(math.floor(-camera_y / camera_zoom), 1)
-        local w, h = math.min(math.ceil(screen_width / camera_zoom) + sx, MAP_WIDTH), math.min(math.ceil(screen_height / camera_zoom) + sy, MAP_HEIGHT)
-        for y = sy, h do
-            for x = sx, w do
-                local c
-                local idx = pos2idx(x, y)
-                if Map.minerals[idx] then c = Map.minerals[idx] / MINERALS_MAX else c = 0.0 end
-                mineral_batch:setColor(0.0, 0.0, 1.0, c)
-                mineral_batch:set(idx, x + 3.5, y + 3.5, 0, 1, 1, 4, 4)
-            end
-        end
-        LG.draw(mineral_batch)
-    end
+    if view_mode == 3 then LG.draw(mineral_batch) end
 
     LG.setColor(0.0, 0.5, 1.0, 0.5)
     LG.rectangle('fill', highlight_x - 0.5, highlight_y - 0.5, 1.0, 1.0)

@@ -20,6 +20,9 @@ CELL_AI_CONFIG = {
 local INIT_ENERGY = 256.0
 local INIT_MINERALS = 256.0
 
+local LEAF_ENERGY_GEN = 10
+local ROOT_MINERAL_EXTRACTION = 10
+
 local M = {}
 local Cell = {}
 Cell.__index = Cell
@@ -30,7 +33,35 @@ M.cell_sprites = {}
 for i = 0, 6 do M.cell_sprites[i] = LG.newQuad(8 * i, 0, 8, 8, cell_atlas) end
 M.cell_batch = LG.newSpriteBatch(cell_atlas, Map.size)
 
-local cell_actions = {}
+local dir_offsets = {-MAP_WIDTH, -1, MAP_WIDTH, 1}
+
+function Cell:leafAct()
+    self.energy = self.energy + LEAF_ENERGY_GEN
+end
+
+function Cell:rootAct()
+end
+
+function Cell:stemAct()
+end
+
+function Cell:seedAct()
+end
+
+function Cell:sporeAct()
+end
+
+function Cell:sproutAct()
+end
+
+local cell_actions = {
+    leafAct,
+    rootAct,
+    stemAct,
+    seedAct,
+    sporeAct,
+    sproutAct
+}
 
 function Cell.new(typ, x, y, direction, args)
     local energy, minerals, teamhash, message
@@ -41,7 +72,7 @@ function Cell.new(typ, x, y, direction, args)
     if args.message then message = args.message else message = 0.0 end
 
     x, y = clamp(x, 1, MAP_WIDTH), clamp(y, 1, MAP_HEIGHT)
-    direction = (direction - 1) % 4
+    direction = direction % 4
     local idx = pos2idx(x, y)
     local rotation = direction / 2 * math.pi
 
@@ -51,15 +82,18 @@ function Cell.new(typ, x, y, direction, args)
         x = x,
         y = y,
         rotation = rotation,
-        direction = direction + 1,
+        direction = direction,
         energy = energy,
         minerals = minerals,
         teamhash = teamhash,
-        message = message
-        alive = true
+        message = message,
+        state = 1,
+        act = cell_actions[typ]
     }
 
-    if typ > 3 then
+    if typ < 3 then
+        cell.target = Map[idx + dir_offsets[direction+1]]
+    elseif typ > 3 then
         local genome
         if args.genome == nil then 
             genome = {}
@@ -69,11 +103,6 @@ function Cell.new(typ, x, y, direction, args)
     end
 
     return setmetatable(cell, Cell)
-end
-
-function Cell:mainAct()
-    self.energy = self.energy - 1
-    if self.energy <= 0 then self.alive = false end
 end
 
 function M.addCell(cell)
