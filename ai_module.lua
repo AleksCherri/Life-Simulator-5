@@ -1,5 +1,5 @@
 local M = {}
-local rand = math.random
+
 local AI = {}
 AI.__index = AI
 
@@ -7,9 +7,9 @@ function AI.new(layers, weights, mult)
     if mult == nil then mult = 100.0 end
     if weights == nil then weights = M.genWeights(layers, mult) end
     return setmetatable({
-        layers = layers,
+        layers  = layers,
         nLayers = #layers,
-        weights = weights
+        weights = weights,
     }, AI)
 end
 
@@ -53,7 +53,7 @@ function AI:act(data)
         local layer, prev_layer = layers[i], layers[i - 1]
         local next_offset = offset + prev_layer
         for j = 1, prev_layer do
-            -- Calculating bias value
+            -- Calculating value
             local value
             if data[j + offset] then value = data[j + offset] else value = 0.0 end
             value = value + weights[idx]
