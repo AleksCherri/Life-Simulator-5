@@ -9,15 +9,14 @@ Cell.__index = Cell
 local dir_offsets = {-MAP_WIDTH, -1, MAP_WIDTH, 1}
 
 function Cell.new(typ, x, y, direction, args)
-    args = args or {}
+    -- Common attributes
+    args           = args or {}
     local energy   = args.energy or CELL_INIT_ENERGY
     local minerals = args.minerals or CELL_INIT_MINERALS
-    local teamhash = args.teamhash or rand()
-    local message  = args.message or 0.0
 
-    x, y = clamp(x, 1, MAP_WIDTH), clamp(y, 1, MAP_HEIGHT)
-    direction = direction % 4
-    local idx = pos2idx(x, y)
+    x, y = clamp(x, 1, MAP_WIDTH), clamp(y, 1, MAP_HEIGHT) -- if not cyclic map
+    direction      = direction % 4
+    local idx      = pos2idx(x, y)
     local rotation = direction / 2 * math.pi
 
     local cell = {
@@ -29,9 +28,7 @@ function Cell.new(typ, x, y, direction, args)
         direction = direction,
         energy    = energy,
         minerals  = minerals,
-        teamhash  = teamhash,
-        message   = message,
-        alive = true
+        alive     = true
     }
 
     if typ < 3 then

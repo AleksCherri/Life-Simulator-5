@@ -56,11 +56,18 @@ function initMineralBatch()
     mineral_batch:clear()
     for y = 1, MAP_HEIGHT do
         for x = 1, MAP_WIDTH do
-            local a = MAP_MINERALS[pos2idx(x, y)] / MINERALS_MAX * 0.4
-            mineral_batch:setColor(0.0, 0.5, 1.0, a)
-            mineral_batch:add(0, x - 0.5, y - 0.5, 0, 0.125, 0.125, 4, 4)
+            local a = MAP_MINERALS[pos2idx(x, y)] / MINERALS_MAX
+            mineral_batch:setColor(0.0, 0.0, a, 0.5)
+            mineral_batch:add(x, y, 0, 1, 1, 0.5, 0.5)
         end
     end
+end
+
+function updateMinerals(idx)
+    local x, y = idx2pos(idx)
+    local a = MAP_MINERALS[idx] / MINERALS_MAX
+    mineral_batch:setColor(0.0, 0.0, a, 0.5)
+    minerals_batch:set(idx, x, y, 0, 1, 1, 0.5, 0.5)
 end
 
 function addCell(cell)
@@ -82,11 +89,15 @@ function addCell(cell)
 end
 
 function removeCell(idx)
-    if MAP_CELLS[idx] == nil then return false else MAP_CELLS[idx] = nil end
-    CELL_COUNTER = CELL_COUNTER - 1
+    local cell = MAP_CELLS[idx]
+    if not cell then return false else MAP_CELLS[idx] = nil end
+
+    MAP_MINERALS[idx] = MAP_MINERALS[idx] + cell.minerals + CELL_COSTS[cell.typ]
+    CELL_COUNTER      = CELL_COUNTER - 1
+    local x, y        = idx2pos(idx)
     cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
-    local x, y = idx2pos(idx)
     cell_batch:set(idx, cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
+    updateMinerals(idx)
     return true
 end
 
@@ -95,6 +106,7 @@ function tick()
     local BUFFER_MINERAL = {}
     local BUFFER_SPAWN   = {}
     local BUFFER_DEATH   = {}
+    local BUFFER_UPDATE  = {}
     local spawn_idx, death_idx = 0, 0
 
     for i = 1, MAP_SIZE do
@@ -125,7 +137,6 @@ function tick()
 end
 
 function love.load()
-
     --[[function update_minerals()
         local sx, sy = math.max(math.floor(-camera_x / camera_zoom), 1), math.max(math.floor(-camera_y / camera_zoom), 1)
         local w, h = math.min(math.ceil(screen_width / camera_zoom) + sx, MAP_WIDTH), math.min(math.ceil(screen_height / camera_zoom) + sy, MAP_HEIGHT)
@@ -187,25 +198,28 @@ function love.draw()
         LG.translate(-camera_x, -camera_y)
 
         LG.print(
-            'FPS: ' .. love.timer.getFPS() ..
-            '\nTPS: ' .. math.floor(1 / tps_threshold) ..
-            '\nCells: ' .. CELL_COUNTER ..
-            '\nX, Y: ' .. highlight_x .. ' ' .. highlight_y ..
+            'FPS: '      .. love.timer.getFPS() ..
+            '\nTPS: '    .. math.floor(1 / tps_threshold) ..
+            '\nCells: '  .. CELL_COUNTER ..
+            '\nX, Y: '   .. highlight_x .. ' ' .. highlight_y ..
             '\nTarget: ' .. target_cell.x .. ' ' .. target_cell.y,
             10, 10
         )
 
         LG.print(
             'View Mode: ' .. VIEW_MODES[view_mode + 1] ..
-            '\nZoom: ' .. string.format('%.2f', camera_zoom),
+            '\nZoom: '    .. string.format('%.2f', camera_zoom),
             10, screen_height - 30
         )
 
         local cell = target_cell.cell
         if cell then 
             LG.print(
-                'Type: ' .. CELL_TYPES[cell.type] ..
-                '\nDir: ' .. cell.direction, 10, 85
+                'Type: '       .. CELL_NAMES[cell.typ] ..
+                '\nDir: '      .. cell.direction ..
+                '\nEnergy: '   .. cell.energy ..
+                '\nMinerals: ' .. cell.minerals,
+                10, 85
             )
         end
 
@@ -221,7 +235,7 @@ function love.mousepressed(x, y, button, istouch)
     elseif button == 2 then
         target_cell.x = highlight_x
         target_cell.y = highlight_y
-        target_cell.cell = Map[pos2idx(highlight_x, highlight_y)]
+        target_cell.cell = MAP_CELLS[pos2idx(highlight_x, highlight_y)]
     end
 end
 
