@@ -1,62 +1,46 @@
+local shares = require('shares')
+
 local M = {}
 
-local AI = {}
-AI.__index = AI
+local rand = math.random
 
-function AI.new(layers, weights, mult)
-    if mult == nil then mult = 100.0 end
-    if weights == nil then weights = M.genWeights(layers, mult) end
-    return setmetatable({
-        layers  = layers,
-        nLayers = #layers,
-        weights = weights,
-    }, AI)
-end
-
-function M.genAi(layers, weights, mult)
-    return AI.new(layers, weights, mult)
-end
-
--- Weights are stored as a table with the following structure: (bias, threshold, diactivation constant, N connection weights to next layer) - for each node
-function M.genWeights(layers, mult)
+-- Weights are stored as a table with the following structure: (bias, threshold, diactivation constant, *weights) per node
+function M.genWeights(mult)
     local scale = mult * 2
     local weights, idx = {}, 1
-
-    for i = 1, #layers - 1 do
-        local layer = layers[i]
-        local next_layer = layers[i+1]
-        for _ = 1, layer * (3 + next_layer) do
-            weights[idx] = (rand() - 0.5) * scale
-            idx = idx + 1
-        end
+    for i = 1, shares.AI_LEN_COMMON do
+        weights[i] = (rand() - 0.5) * scale
     end
-
     return weights
 end
 
-function AI:mutate(mult)
-    if mult == nil then mult = 0.1 end
-    local nW = #self.weights
+function M.mutateWeights(weights, strenght)
+    strenght    = strenght or 0.1
     local scale = mult * 2
-
-    for _ = 1, rand(1, nW) do
-        local idx = rand(1, nW)
-        self.weights[idx] = self.weights[idx] + (rand() - 0.5) * scale
+    local w_len = shares.AI_LEN_COMMON
+    local new_weights = {}
+    for i = 1, w_len do new_weights[i] = weights[i] end
+    for _ = 1, rand(1, w_len) do
+        local idx = rand(1, w_len)
+        new_weights[idx] = new_weights[idx] + (rand() - 0.5) * scale
     end
+    return new_weights
 end
 
-function AI:act(data)
-    local layers, len, weights = self.layers, self.nLayers, self.weights
-    local idx, offset = 1, 0
+function M.run(weights, layers, idx_offset, inputs)
+    local len    = #layers
+    local idx    = 1 + idx_offset
+    local offset = 0
+    local data   = {}
+    for i = 1, layers[1] do data[i] = inputs[i] end
 
     for i = 2, len do
-        local layer, prev_layer = layers[i], layers[i - 1]
+        local layer       = layers[i]
+        local prev_layer  = layers[i - 1]
         local next_offset = offset + prev_layer
         for j = 1, prev_layer do
             -- Calculating value
-            local value
-            if data[j + offset] then value = data[j + offset] else value = 0.0 end
-            value = value + weights[idx]
+            local value = (data[j + offset] or 0.0) + weights[idx]
             if value <= weights[idx + 1] then
                 value = weights[idx + 2]
             end
@@ -64,9 +48,7 @@ function AI:act(data)
             -- Applying weights to the following nodes
             for k = 1, layer do
                 local ofs = next_offset + k
-                local bufval
-                if data[ofs] then bufval = data[ofs] else bufval = 0.0 end
-                data[ofs] = bufval + value * weights[idx + k + 2]
+                data[ofs] = (data[ofs] or 0.0) + value * weights[idx + k + 2]
             end
             idx = idx + layer + 3
             offset = next_offset
@@ -75,7 +57,12 @@ function AI:act(data)
 
     local result = {}
     for i = 1, layers[len] do
-        result[i] = data[offset + i]
+        local value = data[offset + i] + weights[idx]
+        if value <= weights[idx + 1] then
+            value = weights[idx + 2]
+        end
+        result[i] = value
+        idx = idx + 3
     end
     return result
 end

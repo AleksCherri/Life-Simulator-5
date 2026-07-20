@@ -1,51 +1,89 @@
-require('shares')
+local shares      = require('shares')
 local cell_module = require('cell_module')
+
+local LG   = love.graphics
+local rand = math.random
 
 -- Simulation configuration
 local TPS = 60
 
 local VIEW_MODES = {'Normal', 'Energy', 'Cell Minerals', 'Map Minerals'}
 
+-- Clocks-n-Timers
+local step          = 0
 local tps_threshold = 1.0 / TPS
 local tps_timer     = 0.0
 local pause         = true
 
 -- Camera variables
-local view_mode = 0 -- 0: normal, 1: energy, 2: cell minerals, 3: map minerals
-local target_cell = {x = 0, y = 0, cell = nil}
 local screen_width, screen_height = LG.getDimensions()
-local camera_x = (screen_width - MAP_WIDTH) / 2
-local camera_y = (screen_height - MAP_HEIGHT) / 2
+local view_mode   = 0 -- 0: normal, 1: energy, 2: cell minerals, 3: map minerals
+local target_cell = {x = 0, y = 0, cell = nil}
+local camera_x    = (screen_width - shares.MAP_WIDTH) / 2
+local camera_y    = (screen_height - shares.MAP_HEIGHT) / 2
 local camera_zoom = 1.0
-local world_x, world_y = 0.0, 0.0
-local highlight_x, highlight_y = 0, 0
-local draw_interface = true
+local world_x     = 0.0
+local world_y     = 0.0
+local highlight_x = 0
+local highlight_y = 0
+local draw_interface   = true
 local is_mouse_pressed = false
 
-function regenMap()
-    MAP_CELLS, MAP_MINERALS = {}, {}
-    CELL_GENOMES = {}
-    CELL_COUNTER = 0
+local cell_sprites
+local cell_batch
+local mineral_batch
 
-    for i = 1, MAP_SIZE do
+-- Boring cached data
+local pi2 = math.pi * 2
+local dsun = shares.SUN_MAX - shares.SUN_MIN
+--local dir_offsets = {-MAP_WIDTH, -1, MAP_WIDTH, 1}
+local x_offsets = {0, -1, 0, 1}
+local y_offsets = {-1, 0, 1, 0}
+
+local function calcSunFactor(step)
+    local DAY_DURATION = shares.DAY_DURATION
+    local phase = (step % DAY_DURATION) / DAY_DURATION
+    return shares.SUN_MIN + dsun * (0.5 - 0.5 * math.cos(pi2 * phase))
+end
+
+function regenMap()
+    local MAP_CELLS    = shares.MAP_CELLS
+    local MAP_TYPES    = shares.MAP_TYPES
+    local MAP_MINERALS = shares.MAP_MINERALS
+    MAP_CELLS    = {}
+    MAP_TYPES    = {}
+    MAP_MINERALS = {}
+    shares.CELL_GENOMES = {}
+    shares.CELL_QUEUE   = {}
+    shares.CELL_COUNTER = 0
+
+    local MINERALS_MIN, MINERALS_MAX = shares.MINERALS_MIN, shares.MINERALS_MAX
+    for i = 1, shares.MAP_SIZE do
+        MAP_CELLS[i]    = nil
+        MAP_TYPES[i]    = 0
         MAP_MINERALS[i] = rand(MINERALS_MIN, MINERALS_MAX)
     end
+
+    shares.MAP_CELLS    = MAP_CELLS
+    shares.MAP_TYPES    = MAP_TYPES
+    shares.MAP_MINERALS = MAP_MINERALS
 
     initCellBatch()
     initMineralBatch()
 
     addCell(cell_module.initCell(
-        6,
-        rand(1, MAP_WIDTH),
-        rand(1, MAP_HEIGHT),
+        6, -- Sprout
+        rand(1, shares.MAP_WIDTH),
+        rand(1, shares.MAP_HEIGHT),
         rand(0, 3)
     ))
 end
 
 function initCellBatch()
+    local MAP_WIDTH = shares.MAP_WIDTH
     cell_batch:clear()
     cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
-    for y = 1, MAP_HEIGHT do 
+    for y = 1, shares.MAP_HEIGHT do 
         for x = 1, MAP_WIDTH do    
             cell_batch:add(cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
         end
@@ -53,8 +91,12 @@ function initCellBatch()
 end
 
 function initMineralBatch()
+    local MAP_WIDTH    = shares.MAP_WIDTH
+    local MAP_MINERALS = shares.MAP_MINERALS
+    local MINERALS_MAX = shares.MINERALS_MAX
+    local pos2idx      = shares.pos2idx
     mineral_batch:clear()
-    for y = 1, MAP_HEIGHT do
+    for y = 1, shares.MAP_HEIGHT do
         for x = 1, MAP_WIDTH do
             local a = MAP_MINERALS[pos2idx(x, y)] / MINERALS_MAX
             mineral_batch:setColor(0.0, 0.0, a, 0.5)
@@ -64,23 +106,30 @@ function initMineralBatch()
 end
 
 function updateMinerals(idx)
-    local x, y = idx2pos(idx)
-    local a = MAP_MINERALS[idx] / MINERALS_MAX
+    local x, y = shares.idx2pos(idx)
+    local a = shares.MAP_MINERALS[idx] / shares.MINERALS_MAX
     mineral_batch:setColor(0.0, 0.0, a, 0.5)
     minerals_batch:set(idx, x, y, 0, 1, 1, 0.5, 0.5)
 end
 
 function addCell(cell)
-    if MAP_CELLS[cell.idx] then return false else MAP_CELLS[cell.idx] = cell end
-    CELL_COUNTER = CELL_COUNTER + 1
-    local r, g, b = CELL_COLORS[cell.typ]
+    local MAP_CELLS = shares.MAP_CELLS
+    if MAP_CELLS[cell[1]] then return false else
+        MAP_CELLS[cell[1]]        = cell
+        shares.MAP_TYPES[cell[1]] = cell[2]
+    end
+
+    table.insert(shares.CELL_QUEUE, cell[1])
+    shares.CELL_COUNTER = shares.CELL_COUNTER + 1
+    local x, y = shares.idx2pos(cell[1])
+    local r, g, b = shares.CELL_COLORS[cell[2]]
     cell_batch:setColor(r, g, b)
     cell_batch:set(
-        cell.idx,
-        cell_sprites[cell.typ],
-        cell.x,
-        cell.y,
-        cell.rotation,
+        cell[1],
+        cell_sprites[cell[2]],
+        x,
+        y,
+        cell[3] / 2 * math.pi,
         0.125,
         0.125,
         4, 4
@@ -89,12 +138,18 @@ function addCell(cell)
 end
 
 function removeCell(idx)
+    local MAP_CELLS = shares.MAP_CELLS
     local cell = MAP_CELLS[idx]
-    if not cell then return false else MAP_CELLS[idx] = nil end
+    if not cell then return false else
+        MAP_CELLS[idx] = nil
+        MAP_TYPES[idx] = 0
+    end
 
-    MAP_MINERALS[idx] = MAP_MINERALS[idx] + cell.minerals + CELL_COSTS[cell.typ]
-    CELL_COUNTER      = CELL_COUNTER - 1
-    local x, y        = idx2pos(idx)
+    local MAP_MINERALS  = shares.MAP_MINERALS
+    MAP_MINERALS[idx]   = MAP_MINERALS[idx] + cell[5] + shares.CELL_COSTS[cell[2]]
+    table.remove(shares.CELL_QUEUE, idx)
+    shares.CELL_COUNTER = shares.CELL_COUNTER - 1
+    local x, y = shares.idx2pos(idx)
     cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
     cell_batch:set(idx, cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
     updateMinerals(idx)
@@ -102,38 +157,107 @@ function removeCell(idx)
 end
 
 function tick()
+    local MAP_WIDTH  = shares.MAP_WIDTH
+    local MAP_HEIHGT = shares.MAP_HEIGHT
+
+    local CELL_ENERGY_CONS = shares.CELL_ENERGY_CONS
+
+    local MAP_CELLS  = shares.MAP_CELLS
+    local MAP_TYPES  = shares.MAP_TYPES
+    local CELL_QUEUE = shares.CELL_QUEUE
+    local idx2pos    = shares.idx2pos
+    local pos2idx    = shares.pos2idx
+
     local BUFFER_ENERGY  = {}
     local BUFFER_MINERAL = {}
+    local BUFFER_EXTR    = {}
     local BUFFER_SPAWN   = {}
     local BUFFER_DEATH   = {}
-    local BUFFER_UPDATE  = {}
+    --local BUFFER_UPDATE  = {}
+    local extr_idx = 0
     local spawn_idx, death_idx = 0, 0
 
-    for i = 1, MAP_SIZE do
-        local cell = MAP_CELLS[i]
-        if cell then
-            local res = cell:act()
-            if cell.typ <= 3 then
-                for idx, v in pairs(res.energy) do
-                    BUFFER_ENERGY[idx] = (BUFFER_ENERGY[idx] or 0.0) + v
+    step = step + 1
+    local sun_factor = calcSunFactor(step)
+
+    for i = 1, #CELL_QUEUE do
+        local idx  = CELL_QUEUE[i]
+        local cell = MAP_CELLS[idx]
+        local typ  = MAP_TYPES[idx]
+        cell[4] = cell[4] - CELL_ENERGY_CONS[typ]
+        if cell[4] > 0 then
+            if     typ == 1 then -- Leaf
+                local parent_idx = cell[6]
+                if MAP_CELLS[parent_idx] then
+                    BUFFER_ENERGY[parent_idx] = (BUFFER_ENERGY[parent_idx] or 0.0) + shares.LEAF_ENERGY_GEN * sun_factor
+                else
+                    death_idx = death_idx + 1 
+                    BUFFER_DEATH[death_idx] = idx
                 end
-                for idx, v in pairs(res.minerals) do
-                    BUFFER_MINERALS[idx] = (BUFFER_MINERALS[idx] or 0.0) + v
+
+            elseif typ == 2 then -- Root
+                local parent_idx = cell[6]
+                if MAP_CELLS[parent_idx] then
+                    extr_idx = extr_idx + 1
+                    BUFFER_EXTR[extr_idx] = idx
+                else
+                    death_idx = death_idx + 1 
+                    BUFFER_DEATH[death_idx] = idx
                 end
-            elseif cell.typ == 6 then
-                for i = 1, #res.spawns do
-                    spawn_idx = spawn_idx + 1
-                    BUFFER_SPAWN[spawn_idx] = res.spawns[i]
+
+            elseif typ == 3 then -- Stem
+                local x, y = idx2pos(idx)
+                local n = 0
+                local neighbors = {}
+                for i = 1, 4 do
+                    local side_idx = pos2idx(
+                        (x + x_offsets[i]) % MAP_WIDTH,
+                        (y + y_offsets[i]) % MAP_HEIGHT
+                    )
+                    if MAP_CELLS[side_idx] then
+                        n = n + 1
+                        neighbors[n] = side_idx
+                    end
                 end
+
+                if n == 0 then
+                    death_idx = death_idx + 1 
+                    BUFFER_DEATH[death_idx] = idx
+                else
+                    n = n + 1
+                    cell[4] = cell[4] / n
+                    cell[5] = cell[5] / n
+                    for i = 1, #neighbors do
+                        local side_idx = neighbors[i]
+                        BUFFER_ENERGY[side_idx]   = (BUFFER_ENERGY[side_idx]   or 0.0) + cell[4]
+                        BUFFER_MINERALS[side_idx] = (BUFFER_MINERALS[side_idx] or 0.0) + cell[5]
+                    end
+                end
+
+            elseif typ == 4 then -- Seed
+                local x, y = idx2pos(idx)
+                local data = {}
+                local n = 0
+                for i = 1, 4 do
+                    local side_idx = pos2idx(
+                        (x + x_offsets[i]) % MAP_WIDTH,
+                        (y + y_offsets[i]) % MAP_HEIGHT
+                    )
+                    n = n + 1
+                    data[n] = MAP_TYPES[side_idx]
+                end
+
+            elseif typ == 5 then -- Spore
+
+            elseif typ == 6 then -- Sprout
             end
-            if cell.alive == 0 then
-                death_idx = death_idx + 1
-                BUFFER_DEATH[death_idx] = cell.idx
-            end
+        else
+            death_idx = death_idx + 1
+            BUFFER_DEATH[death_idx] = idx
         end
     end
 
-    if CELL_COUNTER <= 0 then regenMap() end
+    if shares.CELL_COUNTER <= 0 then regenMap() end
 end
 
 function love.load()
@@ -181,7 +305,7 @@ function love.draw()
     LG.scale(camera_zoom, camera_zoom)
     LG.setColor(1.0, 1.0, 1.0)
 
-    LG.rectangle('fill', 0.5, 0.5, MAP_WIDTH, MAP_HEIGHT)
+    LG.rectangle('fill', 0.5, 0.5, shares.MAP_WIDTH, shares.MAP_HEIGHT)
     LG.draw(cell_batch)
 
     if view_mode == 3 then LG.draw(mineral_batch) end
@@ -200,7 +324,7 @@ function love.draw()
         LG.print(
             'FPS: '      .. love.timer.getFPS() ..
             '\nTPS: '    .. math.floor(1 / tps_threshold) ..
-            '\nCells: '  .. CELL_COUNTER ..
+            '\nCells: '  .. shares.CELL_COUNTER ..
             '\nX, Y: '   .. highlight_x .. ' ' .. highlight_y ..
             '\nTarget: ' .. target_cell.x .. ' ' .. target_cell.y,
             10, 10
@@ -215,10 +339,10 @@ function love.draw()
         local cell = target_cell.cell
         if cell then 
             LG.print(
-                'Type: '       .. CELL_NAMES[cell.typ] ..
-                '\nDir: '      .. cell.direction ..
-                '\nEnergy: '   .. cell.energy ..
-                '\nMinerals: ' .. cell.minerals,
+                'Type: '       .. shares.CELL_NAMES[cell[2]] ..
+                '\nDir: '      .. cell[3] ..
+                '\nEnergy: '   .. cell[4] ..
+                '\nMinerals: ' .. cell[5],
                 10, 85
             )
         end
@@ -233,9 +357,9 @@ end
 function love.mousepressed(x, y, button, istouch)
     if button == 1 then is_mouse_pressed = true
     elseif button == 2 then
-        target_cell.x = highlight_x
-        target_cell.y = highlight_y
-        target_cell.cell = MAP_CELLS[pos2idx(highlight_x, highlight_y)]
+        target_cell.x    = highlight_x
+        target_cell.y    = highlight_y
+        target_cell.cell = shares.MAP_CELLS[shares.pos2idx(highlight_x, highlight_y)]
     end
 end
 
@@ -257,11 +381,11 @@ function love.wheelmoved(x, y)
 end
 
 function love.keypressed(key, scancode, isrepeat)
-    if key == 'space' then pause = not(pause) 
-    elseif key == 'up' then tps_threshold = clamp(tps_threshold / 1.1, 0.002, 1.0)
-    elseif key == 'down' then tps_threshold = clamp(tps_threshold * 1.1, 0.002, 1.0)
-    elseif key == 'u' then draw_interface = not(draw_interface)
-    elseif key == 'e' then view_mode = (view_mode + 1) % 4
+    if     key == 'space' then pause = not(pause) 
+    elseif key == 'up'    then tps_threshold = shares.clamp(tps_threshold / 1.1, 0.002, 1.0)
+    elseif key == 'down'  then tps_threshold = shares.clamp(tps_threshold * 1.1, 0.002, 1.0)
+    elseif key == 'u'     then draw_interface = not(draw_interface)
+    elseif key == 'e'     then view_mode = (view_mode + 1) % 4
     end
 end
 
