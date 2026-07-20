@@ -18,6 +18,15 @@ M.CELL_INIT_MINERALS = 256.0
 M.LEAF_ENERGY_GEN   = 10
 M.ROOT_MINERAL_EXTR = 10
 
+M.CELL_AGES = {
+    100, -- Leaf
+    100, -- Root
+    100, -- Stem
+    500, -- Seed
+    300, -- Spore
+    100, -- Sprout
+}
+
 M.CELL_ENERGY_CONS = {
     0.5, -- Leaf
     1.0, -- Root
@@ -45,9 +54,9 @@ M.CELL_COLORS = {
     {1.0, 0.5, 0.0}, -- Sprout
 }
 
-M.AI_LAYERS_SEED   = {10, 16, 1}
-M.AI_LAYERS_SPORE  = {7, 14, 1}
-M.AI_LAYERS_SPROUT = {10, 20, 16, 3}
+M.AI_LAYERS_SEED   = {9, 12, 1}
+M.AI_LAYERS_SPORE  = {6, 16, 1}
+M.AI_LAYERS_SPROUT = {9, 18, 3}
 
 -- Cached data
 local floor = math.floor
@@ -73,12 +82,12 @@ M.AI_OFFSET_SPROUT = M.AI_LEN_SEED + M.AI_LEN_SPORE
 
 M.CELL_NAMES = {'Leaf', 'Root', 'Stem', 'Seed', 'Spore', 'Sprout'}
 
-M.MAP_CELLS    = {}
-M.MAP_TYPES    = {}
-M.MAP_MINERALS = {}
-M.CELL_GENOMES = {}
-M.CELL_QUEUE   = {}
-M.CELL_COUNTER = 0
+M.MAP_CELLS      = {}
+M.MAP_TYPES      = {}
+M.MAP_MINERALS   = {}
+M.CELL_GENOMES   = {}
+M.CELL_QUEUE     = {}
+M.CELL_COUNTER   = 0
 
 -- Some useful functions
 function M.clamp(value, lo, hi)

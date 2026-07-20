@@ -24,16 +24,24 @@ function M.initCell(typ, x, y, direction, args)
         direction,
         energy,
         minerals,
+        0, -- age
         parent,
     }
 
-    if typ == 3 then
+    if typ == 3 or typ == 4 or typ == 6 then
         for i = 0, 2 do
             local dir = (direction + i) % 4
-            cell[7 + i] = pos2idx(x + x_offsets[dir], y + y_offset[dir])
+            cell[8 + i] = pos2idx(x + x_offsets[dir], y + y_offsets[dir])
         end
     end
-    if typ > 3 then cell[10] = args.ai end
+    if typ >= 4 then
+        local genome = args.genome
+        if genome == nil then genome = ai_module.genWeights() 
+        elseif rand() < ai_module.GENOME_MUTATION_CHANCE then 
+            genome = ai_module.mutateWeights(genome)
+        end
+        cell[11] = genome
+    end
 
     return cell
 end
