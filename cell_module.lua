@@ -3,6 +3,8 @@ local ai_module = require('ai_module')
 
 local M = {}
 
+local rand = math.random
+
 local x_offsets = {0, -1, 0, 1}
 local y_offsets = {-1, 0, 1, 0}
 
@@ -13,8 +15,11 @@ function M.initCell(typ, x, y, direction, args)
     local minerals = args.minerals or shares.CELL_INIT_MINERALS
     local parent   = args.parent
 
-    --x, y = clamp(x, 1, shares.MAP_WIDTH), clamp(y, 1, shares.MAP_HEIGHT) -- if not cyclic map
     x, y = (x - 1) % shares.MAP_WIDTH + 1, (y - 1) % shares.MAP_HEIGHT + 1
+    if not parent then
+        local back = (direction + 2) % 4 + 1
+        parent = shares.pos2idx(x + x_offsets[back], y + y_offsets[back])
+    end 
     direction      = direction % 4
     local idx      = shares.pos2idx(x, y)
 
@@ -29,8 +34,9 @@ function M.initCell(typ, x, y, direction, args)
     }
 
     if typ == 3 or typ == 4 or typ == 6 then
+        local pos2idx = shares.pos2idx
         for i = 0, 2 do
-            local dir = (direction + i) % 4
+            local dir = (direction + i) % 4 + 1
             cell[8 + i] = pos2idx(x + x_offsets[dir], y + y_offsets[dir])
         end
     end

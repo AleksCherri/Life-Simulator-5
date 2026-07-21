@@ -97,7 +97,8 @@ function M.clamp(value, lo, hi)
 end
 
 function M.pos2idx(x, y)
-    return x + ((y - 1) * M.MAP_WIDTH)
+    local MAP_WIDTH = M.MAP_WIDTH
+    return ((x - 1) % MAP_WIDTH + 1) + ((y - 1) % M.MAP_HEIGHT * MAP_WIDTH)
 end
 
 function M.idx2pos(idx)

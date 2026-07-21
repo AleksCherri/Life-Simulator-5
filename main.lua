@@ -5,10 +5,9 @@ local VIEW_MODES = {'Normal', 'Energy', 'Cell Minerals', 'Map Minerals'}
 
 local shares      = require('shares')
 local cell_module = require('cell_module')
+local ai_module   = require('ai_module')
 
-local LG   = love.graphics
-local rand = math.random
-local remove = table.remove
+local LG     = love.graphics
 
 -- Clocks-n-Timers
 local step          = 0
@@ -35,9 +34,11 @@ local cell_batch
 local mineral_batch
 
 -- Boring cached data
-local pi2 = math.pi * 2
-local dsun = shares.SUN_MAX - shares.SUN_MIN
---local dir_offsets = {-MAP_WIDTH, -1, MAP_WIDTH, 1}
+local rand   = math.random
+local floor  = math.floor
+local remove = table.remove
+local pi2    = math.pi * 2
+local dsun   = shares.SUN_MAX - shares.SUN_MIN
 local x_offsets = {0, -1, 0, 1}
 local y_offsets = {-1, 0, 1, 0}
 
@@ -110,20 +111,19 @@ function updateMinerals(idx)
     local x, y = shares.idx2pos(idx)
     local a = shares.MAP_MINERALS[idx] / shares.MINERALS_MAX
     mineral_batch:setColor(0.0, 0.0, a, 0.5)
-    minerals_batch:set(idx, x, y, 0, 1, 1, 0.5, 0.5)
+    mineral_batch:set(idx, x, y, 0, 1, 1, 0.5, 0.5)
 end
 
 function addCell(cell)
     local MAP_CELLS = shares.MAP_CELLS
-    if MAP_CELLS[cell[1]] then return false else
-        MAP_CELLS[cell[1]]        = cell
-        shares.MAP_TYPES[cell[1]] = cell[2]
-    end
+    if MAP_CELLS[cell[1]] then return false end
+    MAP_CELLS[cell[1]]        = cell
+    shares.MAP_TYPES[cell[1]] = cell[2]
 
     shares.CELL_COUNTER = shares.CELL_COUNTER + 1
     shares.CELL_QUEUE[shares.CELL_COUNTER] = cell[1]
     if cell[2] >= 4 then 
-        local genome = shares.CELL_GENOMES[cell[10]]
+        local genome = shares.CELL_GENOMES[cell[11]]
         genome.counter = genome.counter + 1
     end
     local x, y = shares.idx2pos(cell[1])
@@ -145,23 +145,20 @@ end
 function removeCell(idx)
     local MAP_CELLS = shares.MAP_CELLS
     local cell = MAP_CELLS[idx]
-    if not cell then return false else
-        MAP_CELLS[idx] = nil
-        MAP_TYPES[idx] = 0
-    end
+    if not cell then return false end
+    MAP_CELLS[idx] = nil
+    shares.MAP_TYPES[idx] = 0
 
-    local MAP_MINERALS  = shares.MAP_MINERALS
-    MAP_MINERALS[idx]   = MAP_MINERALS[idx] + cell[5] + shares.CELL_COSTS[cell[2]]
     remove(shares.CELL_QUEUE, idx)
     shares.CELL_COUNTER = shares.CELL_COUNTER - 1
     if cell[2] >= 4 then 
-        local genome = shares.CELL_GENOMES[cell[10]]
+        local genome = shares.CELL_GENOMES[cell[11]]
         genome.counter = genome.counter - 1
     end
     local x, y = shares.idx2pos(idx)
     cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
     cell_batch:set(idx, cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
-    updateMinerals(idx)
+    --updateMinerals(idx)
     return true
 end
 
@@ -170,20 +167,27 @@ function tick()
     local MAP_WIDTH  = shares.MAP_WIDTH
     local MAP_HEIHGT = shares.MAP_HEIGHT
 
-    local CELL_ENERGY_CONS = shares.CELL_ENERGY_CONS
-    local CELL_AGES        = shares.CELL_AGES
-    local AI_LAYERS_SEED   = shares.AI_LAYERS_SEED
-    local AI_LAYERS_SPORE  = shares.AI_LAYERS_SPORE
-    local AI_LAYERS_SPROUT = shares.AI_LAYERS_SPROUT
-    local AI_OFFSET_SEED   = shares.AI_OFFSET_SEED
-    local AI_OFFSET_SPORE  = shares.AI_OFFSET_SPORE
-    local AI_OFFSET_SPROUT = shares.AI_OFFSET_SPROUT
+    local CELL_ENERGY_CONS  = shares.CELL_ENERGY_CONS
+    local CELL_AGES         = shares.CELL_AGES
+    local CELL_COSTS        = shares.CELL_COSTS
+    local CELL_COLORS       = shares.CELL_COLORS
+    local CELL_GENOMES      = shares.CELL_GENOMES
+    local AI_LAYERS_SEED    = shares.AI_LAYERS_SEED
+    local AI_LAYERS_SPORE   = shares.AI_LAYERS_SPORE
+    local AI_LAYERS_SPROUT  = shares.AI_LAYERS_SPROUT
+    local AI_OFFSET_SEED    = shares.AI_OFFSET_SEED
+    local AI_OFFSET_SPORE   = shares.AI_OFFSET_SPORE
+    local AI_OFFSET_SPROUT  = shares.AI_OFFSET_SPROUT
+    local LEAF_ENERGY_GEN   = shares.LEAF_ENERGY_GEN
+    local ROOT_MINERAL_EXTR = shares.ROOT_MINERAL_EXTR
 
-    local MAP_CELLS  = shares.MAP_CELLS
-    local MAP_TYPES  = shares.MAP_TYPES
-    local CELL_QUEUE = shares.CELL_QUEUE
-    local idx2pos    = shares.idx2pos
-    local pos2idx    = shares.pos2idx
+    local MAP_CELLS    = shares.MAP_CELLS
+    local MAP_TYPES    = shares.MAP_TYPES
+    local MAP_MINERALS = shares.MAP_MINERALS
+    local CELL_QUEUE   = shares.CELL_QUEUE
+    local idx2pos      = shares.idx2pos
+    local pos2idx      = shares.pos2idx
+    local initCell     = cell_module.initCell
 
     local BUFFER_ENERGY  = {}
     local BUFFER_MINERAL = {}
@@ -191,8 +195,10 @@ function tick()
     local BUFFER_SPAWN   = {}
     local BUFFER_DEATH   = {}
     local BUFFER_UPDATE  = {}
+    local BUFFER_MOVING  = {} -- {from1, to1, from2, to2}
     local extr_idx, spawn_idx   = 0, 0
     local death_idx, update_idx = 0, 0
+    local move_idx = 0
 
     step = step + 1
     local sun_factor = calcSunFactor(step)
@@ -207,7 +213,7 @@ function tick()
             if     typ == 1 then -- Leaf
                 local parent_idx = cell[7]
                 if MAP_TYPES[parent_idx] then
-                    BUFFER_ENERGY[parent_idx] = (BUFFER_ENERGY[parent_idx] or 0.0) + shares.LEAF_ENERGY_GEN * sun_factor
+                    BUFFER_ENERGY[parent_idx] = (BUFFER_ENERGY[parent_idx] or 0.0) + LEAF_ENERGY_GEN * sun_factor
                 else
                     death_idx = death_idx + 1 
                     BUFFER_DEATH[death_idx] = idx
@@ -235,11 +241,11 @@ function tick()
                 end
                 if n == 1 then
                     death_idx = death_idx + 1
-                    BUFFER_DEATH[death_idx]
+                    BUFFER_DEATH[death_idx] = idx
                 else
                     cell[4] = cell[4] / n
                     cell[5] = cell[5] / n
-                    for j = 1, #targets do
+                    for j = 1, n - 1 do
                         local t_idx = targets[j]
                         BUFFER_ENERGY[t_idx]  = (BUFFER_ENERGY[t_idx]  or 0.0) + cell[4]
                         BUFFER_MINERAL[t_idx] = (BUFFER_MINERAL[t_idx] or 0.0) + cell[5]
@@ -258,25 +264,216 @@ function tick()
                 for j = 1, 4 do
                     data[5 + j] = (MAP_TYPES[cell[6 + i]] or 0)
                 end
-                local res = ai_module.run(
+                local action = ai_module.run(
                     CELL_GENOMES[cell[11]],
                     AI_LAYERS_SEED,
                     AI_OFFSET_SEED,
                     data
-                )
-                if res > 0.0 then
+                )[1]
+                if action > 0.0 then
                     cell[2] = 6
+                    cell[5] = cell[5] + CELL_COSTS[4] - CELL_COSTS[6]
                     update_idx = update_idx + 1
                     BUFFER_UPDATE[update_idx] = idx
                 end
 
             elseif typ == 5 then -- Spore
+                local x, y = idx2pos(idx)
+                local target_idx = pos2idx(
+                    (x + x_offsets[cell[3]]),
+                    (y + y_offsets[cell[3]])
+                )
+                local target_type = MAP_TYPES[target_idx]
+                local data = {
+                    cell[3],
+                    cell[4],
+                    cell[5],
+                    cell[6],
+                    sun_factor,
+                    target_type or 0,
+                }
+                local action = floor(ai_module.run(
+                    CELL_GENOMES[cell[11]],
+                    AI_LAYERS_SPORE,
+                    AI_OFFSET_SPORE,
+                    data
+                )[1]) % 5
+                if     action == 1 then
+                    cell[3] = (cell[3] - 1) % 4
+                    update_idx = update_idx + 1
+                    BUFFER_UPDATE[update_idx] = idx
+                elseif action == 2 then
+                    cell[3] = (cell[3] + 1) % 4
+                    update_idx = update_idx + 1
+                    BUFFER_UPDATE[update_idx] = idx
+                elseif action == 3 then
+                    move_idx = move_idx + 2
+                    BUFFER_MOVING[move_idx - 1] = idx
+                    BUFFER_MOVING[move_idx] = target_idx
+                elseif action == 4 then
+                    cell[2] = 4
+                    cell[5] = cell[5] + CELL_COSTS[5] - CELL_COSTS[4]
+                    update_idx = update_idx + 1
+                    BUFFER_UPDATE[update_idx] = idx
+                end
 
             elseif typ == 6 then -- Sprout
+                local x, y = idx2pos(idx)
+                local data = {
+                    cell[3], 
+                    cell[4],
+                    cell[5],
+                    cell[6],
+                    sun_factor,
+                }
+                for j = 1, 4 do
+                    data[5 + j] = (MAP_TYPES[cell[6 + i]] or 0)
+                end
+                local res = ai_module.run(
+                    CELL_GENOMES[cell[11]],
+                    AI_LAYERS_SPROUT,
+                    AI_OFFSET_SPROUT,
+                    data
+                )
+                local childs = {}
+                local n = 0
+                local shared_energy = cell[4] / 4
+                cell[4] = shared_energy
+                
+                for j = 1, 3 do
+                    local typ = floor(res[j]) % 7
+                    local cost = CELL_COSTS[typ]
+                    if typ > 0 and cell[5] > cost then
+                        cell[5] = cell[5] - cost
+                        local x, y = idx2pos(cell[6 + j])
+                        local child = initCell(
+                            typ,
+                            x, y,
+                            (cell[3] + j - 2) % 4,
+                            {
+                                energy   = shared_energy,
+                                minerals = 0,
+                                parent   = idx,
+                                genome   = cell[11],
+                            }
+                        )
+                        n = n + 1
+                        spawn_idx = spawn_idx + 1
+                        BUFFER_SPAWN[spawn_idx] = child
+                    else cell[4] = cell[4] + shared_energy
+                    end
+                end
+                if n > 0 then
+                    cell[2] = 3
+                    update_idx = update_idx + 1
+                    BUFFER_UPDATE[update_idx] = idx
+                end
             end
         else
             death_idx = death_idx + 1
             BUFFER_DEATH[death_idx] = idx
+        end
+    end
+
+    for i = 1, death_idx do -- Killing cells
+        local idx = BUFFER_DEATH[i]
+        local cell = MAP_CELLS[idx]
+        local drop_minerals = false
+        if MAP_TYPES[idx] ~= 5 then    
+            local parent = MAP_CELLS[cell[7]]
+            if parent then
+                parent[4] = parent[4] + cell[4]
+                parent[5] = parent[5] + cell[5]
+            else drop_minerals = true
+            end
+        else drop_minerals = true
+        end
+        if drop_minerals then
+            MAP_MINERALS[idx] = MAP_MINERALS[idx] + cell[5] + CELL_COSTS[cell[2]]
+            updateMinerals(idx)
+        end
+        removeCell(idx)
+    end
+
+    for i = 1, shares.MAP_SIZE do -- Resource transfering
+        local energy   = (BUFFER_ENERGY[i]  or 0.0)
+        local minerals = (BUFFER_MINERAL[i] or 0.0)
+        if energy ~= 0.0 and minerals ~= 0.0 then
+            local cell = MAP_CELLS[i]
+            if cell then
+                cell[4] = cell[4] + energy
+                cell[5] = cell[5] + minerals
+            end
+        end
+    end
+
+    for i = 1, extr_idx do -- Mineral extraction
+        local idx  = BUFFER_EXTR[i]
+        local cell = MAP_CELLS[idx]
+        local minerals = math.min(MAP_MINERALS[idx], ROOT_MINERAL_EXTR)
+        MAP_MINERALS[idx] = MAP_MINERALS[idx] - minerals
+        cell[5] = cell[5] + minerals
+        updateMinerals(idx)
+    end
+
+    for i = 1, spawn_idx do -- Cell spawning
+        local cell = BUFFER_SPAWN[i]
+        if not addCell(cell) then
+            local parent = MAP_CELLS[cell[7]]
+            if parent then
+                parent[4] = parent[4] + cell[4]
+                parent[5] = parent[5] + cell[5] + CELL_COSTS[cell[2]]
+            else
+                local idx = cell[1]
+                MAP_MINERALS[idx] = MAP_MINERALS[idx] + cell[5] + CELL_COSTS[cell[2]]
+                updateMinerals(idx)
+            end
+        end
+    end
+
+    for i = 1, update_idx do -- Updating cells
+        local idx  = BUFFER_UPDATE[i]
+        local cell = MAP_CELLS[idx]
+        local x, y = idx2pos(idx)
+        local r, g, b = CELL_COLORS[cell[2]]
+        cell_batch:setColor(r, g, b)
+        cell_batch:set(
+            idx,
+            cell_sprites[cell[2]],
+            x,
+            y,
+            cell[3] / 2 * math.pi,
+            0.125,
+            0.125,
+            4, 4
+        )
+    end
+
+    for i = 1, move_idx, 2 do
+        local idx_from, idx_to = BUFFER_MOVING[i], BUFFER_MOVING[i + 1]
+        local cell = MAP_CELLS[idx_from]
+        if cell and not MAP_TYPES[idx_to] then
+            cell[1] = idx_to
+            MAP_CELLS[idx_to]   = cell
+            MAP_TYPES[idx_to]   = cell[2]
+            MAP_CELLS[idx_from] = nil
+            MAP_TYPES[idx_from] = nil
+            local x, y = idx2pos(idx_to)
+            local r, g, b = CELL_COLORS[cell[2]]
+            cell_batch:setColor(r, g, b)
+            cell_batch:set(
+                idx_to,
+                cell_sprites[cell[2]],
+                x,
+                y,
+                cell[3] / 2 * math.pi,
+                0.125,
+                0.125,
+                4, 4
+            )
+            local x, y = idx2pos(idx_from)
+            cell_batch:setColor(0.0, 0.5, 1.0, 0.1)
+            cell_batch:set(idx_from, cell_sprites[0], x, y, 0, 0.125, 0.125, 4, 4)
         end
     end
 
@@ -409,6 +606,7 @@ function love.keypressed(key, scancode, isrepeat)
     elseif key == 'down'  then tps_threshold = shares.clamp(tps_threshold * 1.1, 0.002, 1.0)
     elseif key == 'u'     then draw_interface = not(draw_interface)
     elseif key == 'e'     then view_mode = (view_mode + 1) % 4
+    elseif key == 'r'     then regenMap()
     end
 end
 

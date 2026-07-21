@@ -36,7 +36,7 @@ end
 function M.mutateWeights(genome_idx, strenght)
     local weights = shares.CELL_GENOMES[genome_idx]
     strenght    = strenght or M.GENOME_MUTATION_STRENGHT
-    local scale = mult * 2
+    local scale = strenght * 2
     local w_len = shares.AI_LEN_COMMON
     local new_weights = {}
     for i = 1, w_len do new_weights[i] = weights[i] end
