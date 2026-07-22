@@ -1,5 +1,5 @@
 -- Simulation configuration
-local TPS = 60
+local TPS = 3
 
 local VIEW_MODES = {'Normal', 'Energy', 'Cell Minerals', 'Map Minerals'}
 
@@ -10,6 +10,7 @@ local ai_module   = require('ai_module')
 local LG     = love.graphics
 
 -- Clocks-n-Timers
+local sun_factor = 1.0
 local step          = 0
 local tps_threshold = 1.0 / TPS
 local tps_timer     = 0.0
@@ -18,7 +19,7 @@ local pause         = true
 -- Camera variables
 local screen_width, screen_height = LG.getDimensions()
 local view_mode   = 0 -- 0: normal, 1: energy, 2: cell minerals, 3: map minerals
-local target_cell = {x = 0, y = 0, cell = nil}
+local target_cell = {idx = 0, x = 0, y = 0, cell = nil}
 local camera_x    = (screen_width - shares.MAP_WIDTH) / 2
 local camera_y    = (screen_height - shares.MAP_HEIGHT) / 2
 local camera_zoom = 1.0
@@ -39,12 +40,12 @@ local floor  = math.floor
 local remove = table.remove
 local pi2    = math.pi * 2
 local dsun   = shares.SUN_MAX - shares.SUN_MIN
-local x_offsets = {0, -1, 0, 1}
-local y_offsets = {-1, 0, 1, 0}
+local x_offsets = {1, 0, -1, 0}
+local y_offsets = {0, 1, 0, -1}
 
 local function calcSunFactor(step)
     local DAY_DURATION = shares.DAY_DURATION
-    local phase = (step % DAY_DURATION) / DAY_DURATION
+    local phase = (step % DAY_DURATION) / DAY_DURATION - 0.5
     return shares.SUN_MIN + dsun * (0.5 - 0.5 * math.cos(pi2 * phase))
 end
 
@@ -58,6 +59,7 @@ function regenMap()
     shares.CELL_GENOMES = {}
     shares.CELL_QUEUE   = {}
     shares.CELL_COUNTER = 0
+    step = 0
 
     local MINERALS_MIN, MINERALS_MAX = shares.MINERALS_MIN, shares.MINERALS_MAX
     for i = 1, shares.MAP_SIZE do
@@ -147,10 +149,8 @@ function removeCell(idx)
     local cell = MAP_CELLS[idx]
     if not cell then return false end
     MAP_CELLS[idx] = nil
-    shares.MAP_TYPES[idx] = 0
+    shares.MAP_TYPES[idx] = nil
 
-    remove(shares.CELL_QUEUE, idx)
-    shares.CELL_COUNTER = shares.CELL_COUNTER - 1
     if cell[2] >= 4 then 
         local genome = shares.CELL_GENOMES[cell[11]]
         genome.counter = genome.counter - 1
@@ -201,12 +201,16 @@ function tick()
     local move_idx = 0
 
     step = step + 1
-    local sun_factor = calcSunFactor(step)
+    sun_factor = calcSunFactor(step)
 
     for i = 1, #CELL_QUEUE do
         local idx  = CELL_QUEUE[i]
         local cell = MAP_CELLS[idx]
         local typ  = MAP_TYPES[idx]
+        if cell == nil then
+            pause = true
+            return
+        end
         cell[4] = cell[4] - CELL_ENERGY_CONS[typ]
         cell[6] = cell[6] + 1
         if cell[4] > 0 and cell[6] < CELL_AGES[typ] then
@@ -233,7 +237,7 @@ function tick()
                 local n = 1
                 local targets = {}
                 for j = 1, 3 do
-                    local t_idx = cell[7 + i]
+                    local t_idx = cell[7 + j]
                     if MAP_TYPES[t_idx] then 
                         targets[n] = t_idx
                         n = n + 1
@@ -279,10 +283,12 @@ function tick()
 
             elseif typ == 5 then -- Spore
                 local x, y = idx2pos(idx)
+                local dir = cell[3] + 1
                 local target_idx = pos2idx(
-                    (x + x_offsets[cell[3]]),
-                    (y + y_offsets[cell[3]])
+                    (x + x_offsets[dir]),
+                    (y + y_offsets[dir])
                 )
+                cell[7] = nil
                 local target_type = MAP_TYPES[target_idx]
                 local data = {
                     cell[3],
@@ -313,6 +319,10 @@ function tick()
                 elseif action == 4 then
                     cell[2] = 4
                     cell[5] = cell[5] + CELL_COSTS[5] - CELL_COSTS[4]
+                    for j = 1, 4 do
+                        local dir = (cell[3] + j + 1) % 4 + 1
+                        cell[6 + j] = pos2idx(x + x_offsets[dir], y + y_offsets[dir])
+                    end
                     update_idx = update_idx + 1
                     BUFFER_UPDATE[update_idx] = idx
                 end
@@ -339,13 +349,12 @@ function tick()
                 local n = 0
                 local shared_energy = cell[4] / 4
                 cell[4] = shared_energy
-                
                 for j = 1, 3 do
                     local typ = floor(res[j]) % 7
                     local cost = CELL_COSTS[typ]
                     if typ > 0 and cell[5] > cost then
                         cell[5] = cell[5] - cost
-                        local x, y = idx2pos(cell[6 + j])
+                        local x, y = idx2pos(cell[7 + j])
                         local child = initCell(
                             typ,
                             x, y,
@@ -395,6 +404,19 @@ function tick()
         removeCell(idx)
     end
 
+    local write_idx = 0
+    for i = 1, shares.CELL_COUNTER do -- Removing dead cell from queue
+        local idx = CELL_QUEUE[i]
+        if MAP_CELLS[idx] then
+            write_idx = write_idx + 1
+            CELL_QUEUE[write_idx] = idx
+        end
+    end
+    for i = write_idx + 1, shares.CELL_COUNTER do
+        CELL_QUEUE[i] = nil
+    end
+    shares.CELL_COUNTER = write_idx
+
     for i = 1, shares.MAP_SIZE do -- Resource transfering
         local energy   = (BUFFER_ENERGY[i]  or 0.0)
         local minerals = (BUFFER_MINERAL[i] or 0.0)
@@ -403,6 +425,7 @@ function tick()
             if cell then
                 cell[4] = cell[4] + energy
                 cell[5] = cell[5] + minerals
+            else print('Resource miss')
             end
         end
     end
@@ -434,6 +457,7 @@ function tick()
     for i = 1, update_idx do -- Updating cells
         local idx  = BUFFER_UPDATE[i]
         local cell = MAP_CELLS[idx]
+        MAP_TYPES[idx] = cell[2]
         local x, y = idx2pos(idx)
         local r, g, b = CELL_COLORS[cell[2]]
         cell_batch:setColor(r, g, b)
@@ -544,9 +568,11 @@ function love.draw()
         LG.print(
             'FPS: '      .. love.timer.getFPS() ..
             '\nTPS: '    .. math.floor(1 / tps_threshold) ..
+            '\nStep: '   .. step ..
+            '\nSun: '    .. string.format('%.2f', sun_factor) ..
             '\nCells: '  .. shares.CELL_COUNTER ..
             '\nX, Y: '   .. highlight_x .. ' ' .. highlight_y ..
-            '\nTarget: ' .. target_cell.x .. ' ' .. target_cell.y,
+            '\nTarget: ' .. target_cell.x .. ' ' .. target_cell.y .. ' ' .. target_cell.idx,
             10, 10
         )
 
@@ -559,11 +585,17 @@ function love.draw()
         local cell = target_cell.cell
         if cell then 
             LG.print(
-                'Type: '       .. shares.CELL_NAMES[cell[2]] ..
+                'Idx: '        .. cell[1] ..
+                '\nType: '     .. string.format('real %s, on map %s', shares.CELL_NAMES[cell[2]], shares.CELL_NAMES[shares.MAP_TYPES[cell[1]]]) ..
                 '\nDir: '      .. cell[3] ..
                 '\nEnergy: '   .. cell[4] ..
-                '\nMinerals: ' .. cell[5],
-                10, 85
+                '\nMinerals: ' .. cell[5] ..
+                '\nAge: '      .. cell[6] ..
+                '\nSurrs: '    .. tostring(cell[7]) ..
+                ' '            .. tostring(cell[8]) ..
+                ' '            .. tostring(cell[9]) ..
+                ' '            .. tostring(cell[10]),
+                10, 115
             )
         end
 
@@ -577,6 +609,7 @@ end
 function love.mousepressed(x, y, button, istouch)
     if button == 1 then is_mouse_pressed = true
     elseif button == 2 then
+        target_cell.idx  = shares.pos2idx(highlight_x, highlight_y)
         target_cell.x    = highlight_x
         target_cell.y    = highlight_y
         target_cell.cell = shares.MAP_CELLS[shares.pos2idx(highlight_x, highlight_y)]
