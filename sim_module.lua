@@ -136,7 +136,6 @@ end
 --   regenMap() tail   -> return state.CELL_COUNTER <= 0
 -- Returns true when no cells are left (main.lua then calls regenMap()).
 function M.tick(state, view)
-    -- Cache
     local CELL_ENERGY_CONS  = state.CELL_ENERGY_CONS
     local CELL_AGES         = state.CELL_AGES
     local CELL_COSTS        = state.CELL_COSTS
@@ -170,6 +169,7 @@ function M.tick(state, view)
     local extr_idx, spawn_idx   = 0, 0
     local death_idx, update_idx = 0, 0
     local move_idx, release_idx = 0, 0
+    local ai_calls              = 0
 
     -- Indices written into BUFFER_ENERGY/BUFFER_MINERAL this tick (dedup),
     -- so the transfer phase skips the full-map scan.
@@ -183,6 +183,9 @@ function M.tick(state, view)
     end
     -- One reusable input table for all ai_module.run calls this tick.
     local data = {}
+    -- Reusable result table: every run_into result is consumed within the
+    -- same tick before the next run_into overwrites it.
+    local ai_out = {}
 
     state.step = state.step + 1
     state.sun_factor = M.calcSunFactor(state, state.step)
@@ -250,7 +253,6 @@ function M.tick(state, view)
                 end
 
             elseif typ == 4 then -- Seed
-                local x, y = idx2pos(idx)
                 data[1] = cell[3]
                 data[2] = cell[4]
                 data[3] = cell[5]
@@ -259,11 +261,13 @@ function M.tick(state, view)
                 for j = 1, 4 do
                     data[5 + j] = (MAP_TYPES[cell[6 + j]] or 0)
                 end
-                local action = ai_module.run(
+                ai_calls = ai_calls + 1
+                local action = ai_module.run_into(
                     CELL_GENOMES[cell[11]],
                     AI_LAYERS_SEED,
                     AI_OFFSET_SEED,
-                    data
+                    data,
+                    ai_out
                 )[1]
                 if action > 0.0 then
                     cell[2] = 6
@@ -287,11 +291,13 @@ function M.tick(state, view)
                 data[4] = cell[6]
                 data[5] = state.sun_factor
                 data[6] = target_type or 0
-                local action = floor(ai_module.run(
+                ai_calls = ai_calls + 1
+                local action = floor(ai_module.run_into(
                     CELL_GENOMES[cell[11]],
                     AI_LAYERS_SPORE,
                     AI_OFFSET_SPORE,
-                    data
+                    data,
+                    ai_out
                 )[1]) % 5
                 if     action == 1 then
                     cell[3] = (cell[3] - 1) % 4
@@ -317,7 +323,6 @@ function M.tick(state, view)
                 end
 
             elseif typ == 6 then -- Sprout
-                local x, y = idx2pos(idx)
                 data[1] = cell[3]
                 data[2] = cell[4]
                 data[3] = cell[5]
@@ -326,11 +331,13 @@ function M.tick(state, view)
                 for j = 1, 4 do
                     data[5 + j] = (MAP_TYPES[cell[6 + j]] or 0)
                 end
-                local res = ai_module.run(
+                ai_calls = ai_calls + 1
+                local res = ai_module.run_into(
                     CELL_GENOMES[cell[11]],
                     AI_LAYERS_SPROUT,
                     AI_OFFSET_SPROUT,
-                    data
+                    data,
+                    ai_out
                 )
                 local n = 0
                 local shared_energy = cell[4] / 4
@@ -505,7 +512,17 @@ function M.tick(state, view)
         M.moveCell(state, idx_from, idx_to, view)
     end
 
-    return state.CELL_COUNTER <= 0
+    -- moves/extracts are pair-buffered, so their recorded counts are halved.
+    local stats = {
+        births   = spawn_idx,
+        deaths   = death_idx,
+        moves    = move_idx / 2,
+        updates  = update_idx,
+        extracts = extr_idx / 2,
+        ai_calls = ai_calls,
+        cells    = state.CELL_COUNTER,
+    }
+    return state.CELL_COUNTER <= 0, stats
 end
 
 return M
