@@ -1,7 +1,6 @@
--- Simulation configuration
 local TPS = 3
 
-local VIEW_MODES = {'Normal', 'Energy', 'Cell Minerals', 'Map Minerals'}
+local VIEW_MODES = {'Normal', 'Map Minerals'}
 
 local shares      = require('shares')
 local cell_module = require('cell_module')
@@ -9,7 +8,6 @@ local sim_module  = require('sim_module')
 
 local LG     = love.graphics
 
--- Clocks-n-Timers
 local tps_threshold = 1.0 / TPS
 local tps_timer     = 0.0
 local pause         = true
@@ -27,9 +25,8 @@ local extinct_peak    = 0
 -- Minerals-only conservation baseline (cells + cost reserve + map), reset on regen.
 local mineral_baseline = 0.0
 
--- Camera variables
 local screen_width, screen_height = LG.getDimensions()
-local view_mode   = 0 -- 0: normal, 1: energy, 2: cell minerals, 3: map minerals
+local view_mode   = 0 -- 0: normal, 1: map minerals
 local target_cell = {idx = 0, x = 0, y = 0, cell = nil}
 local camera_x    = (screen_width - shares.MAP_WIDTH) / 2
 local camera_y    = (screen_height - shares.MAP_HEIGHT) / 2
@@ -205,7 +202,7 @@ function love.draw()
     LG.setColor(1.0, 1.0, 1.0)
     LG.draw(cell_batch)
 
-    if view_mode == 3 then LG.draw(mineral_batch) end
+    if view_mode == 1 then LG.draw(mineral_batch) end
 
     LG.setColor(0.0, 0.5, 1.0, 0.5)
     LG.rectangle('fill', highlight_x - 0.5, highlight_y - 0.5, 1.0, 1.0)
@@ -263,10 +260,11 @@ end
 function love.mousepressed(x, y, button, istouch)
     if button == 1 then is_mouse_pressed = true
     elseif button == 2 then
-        target_cell.idx  = shares.pos2idx(highlight_x, highlight_y)
+        local idx     = shares.pos2idx(highlight_x, highlight_y)
+        target_cell.idx  = idx
         target_cell.x    = highlight_x
         target_cell.y    = highlight_y
-        target_cell.cell = shares.MAP_CELLS[shares.pos2idx(highlight_x, highlight_y)]
+        target_cell.cell = shares.MAP_CELLS[idx]
     end
 end
 
@@ -293,7 +291,7 @@ function love.keypressed(key, scancode, isrepeat)
     elseif key == 'up'    then tps_threshold = shares.clamp(tps_threshold / 1.1, 0.002, 1.0)
     elseif key == 'down'  then tps_threshold = shares.clamp(tps_threshold * 1.1, 0.002, 1.0)
     elseif key == 'u'     then draw_interface = not(draw_interface)
-    elseif key == 'e'     then view_mode = (view_mode + 1) % 4
+    elseif key == 'e'     then view_mode = (view_mode + 1) % 2
     elseif key == 'r'     then regenMap()
     end
 end

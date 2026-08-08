@@ -40,7 +40,6 @@ do
 end
 _M.has_love_thread = has_love_thread
 
--- ------------------------------------------------------ worker internals ----
 local Worker = {}
 Worker.__index = Worker
 
@@ -111,53 +110,12 @@ function Worker.new(opts)
     if not ctx then
         return nil, cerr
     end
-    local pcache = pipelines.PipelineCache.new(ctx, {
-        spv_dir = opts.spv_dir,
-    })
-    local aset, aerr = arenas.ArenaSet.new(ctx, opts)
-    if not aset then
+    local w, werr = Worker._wrap(ctx, opts)
+    if not w then
         vulkan.destroy(ctx)
-        return nil, aerr
+        return nil, werr
     end
-    -- One command buffer + one fence for the whole lifecycle.
-    local cb = ffi.new('VkCommandBuffer[1]')
-    local cbai = ffi.new('VkCommandBufferAllocateInfo')
-    cbai.sType = VK.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
-    cbai.commandPool = ctx.command_pool
-    cbai.level = VK.COMMAND_BUFFER_LEVEL_PRIMARY
-    cbai.commandBufferCount = 1
-    local res = ctx.fn.device.allocateCommandBuffers(ctx.device, cbai, cb)
-    if res ~= VK.SUCCESS then
-        aset:drop()
-        vulkan.destroy(ctx)
-        return nil, mkerr(ERR.VULKAN_INITIALIZATION_FAILED, 'vkAllocateCommandBuffers failed: ' .. res)
-    end
-    local fence = ffi.new('VkFence[1]')
-    local fci = ffi.new('VkFenceCreateInfo')
-    fci.sType = VK.STRUCTURE_TYPE_FENCE_CREATE_INFO
-    res = ctx.fn.device.createFence(ctx.device, fci, nil, fence)
-    if res ~= VK.SUCCESS then
-        ctx.fn.device.freeCommandBuffers(ctx.device, ctx.command_pool, 1, cb)
-        aset:drop()
-        vulkan.destroy(ctx)
-        return nil, mkerr(ERR.VULKAN_INITIALIZATION_FAILED, 'vkCreateFence failed: ' .. res)
-    end
-
-    local self = setmetatable({
-        ctx = ctx,
-        opts = opts,
-        cache = pcache,
-        arenas = aset,
-        cmd = cb[0],
-        fence = fence[0],
-        buffers = {},     -- input/output/config host-visible buffers
-        descriptor_sets = {}, -- cache key -> descriptor set (per pipe + buffer set)
-        results = {},     -- pending results (passthrough mode)
-        last_submitted_tick = nil,
-        alive = true,
-        device_lost = false,
-    }, Worker)
-    return self
+    return w
 end
 
 -- ensure_buffer(kind, bytes) -> buffer | nil, err — grow on demand.
@@ -199,7 +157,6 @@ function Worker:get_descriptor_set(pipe, buffers)
     return set, nil
 end
 
--- --------------------------------------------------------- batch execution --
 -- run_batch(batch) -> result table (never raises). A batch:
 --   { tick_id, model_hash, backend='vulkan', precision, profile={...},
 --     layer_map={...}?, rows={ {genome_id, profile, item} , ... },
@@ -409,7 +366,6 @@ function Worker:run_batch(batch)
     return result
 end
 
--- ------------------------------------------------------------ passthrough ----
 -- Same-thread worker: used when love.thread is unavailable (plain LuaJIT). The
 -- public API mirrors the threaded worker (submit/wait/shutdown) so callers are
 -- agnostic.
@@ -482,7 +438,6 @@ function Passthrough:shutdown()
     return true
 end
 
--- --------------------------------------------------------------- LÖVE ----
 -- love.thread worker: the device context is created INSIDE the thread. Only
 -- plain Lua data crosses the channels (never FFI cdata — cdata cannot cross
 -- threads). Shutdown drains the channel, waits, and terminates the thread.
@@ -584,7 +539,6 @@ function LoveThread:shutdown()
     return true
 end
 
--- ---------------------------------------------------------------- factory ----
 -- new(opts) -> worker | nil, err. Prefers love.thread; falls back to the
 -- same-thread passthrough so the module works in plain LuaJIT.
 function _M.new(opts)

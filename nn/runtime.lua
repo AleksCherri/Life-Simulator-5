@@ -34,19 +34,10 @@ local PRECISIONS = { fp32 = true, fp16 = true, fp8 = true, fp4 = true, fp2 = tru
 local PACKED_FORMATS = { fp8 = true, fp4 = true, fp2 = true }
 local GATE_THRESHOLDS = corpus_mod.GATE_THRESHOLDS
 
--- ------------------------------------------------------------- FNV-ish hash --
 -- Deterministic string hash (arithmetic-only: LuaJIT bitwise ops are signed
 -- int32, so plain arithmetic keeps both interpreters byte-identical).
-local function hash_string(s)
-    local h = 5381
-    for i = 1, #s do
-        h = (h * 33 + s:byte(i)) % 4294967296
-    end
-    return h
-end
-Runtime.hash_string = hash_string
-
--- ------------------------------------------------------------ weight blobs --
+-- Shared with nn.corpus.
+Runtime.hash_string = corpus_mod.hash_string
 
 -- Decode any weights blob into a per-network node-major 1-based Lua table.
 --   table  -> numeric array (common genome OR per-network length)
@@ -133,8 +124,6 @@ local function genome_key(weights, profile_key)
     return tostring(weights) .. '|' .. profile_key
 end
 
--- ---------------------------------------------------------------- packing --
-
 -- Validate finiteness of a decoded weight stream (reject NaN/Inf).
 local function check_finite(w, backend)
     for i = 1, #w do
@@ -149,6 +138,12 @@ end
 
 -- Quantize one layer matrix into { payload, scales, offsets, logical,
 -- padded, blocks, max_code }. max_code: nil (fp8) / 15 (fp4) / 3 (fp2).
+local function max_code_for(precision)
+    if precision == 'fp8' then return nil end
+    if precision == 'fp4' then return 15 end
+    return 3
+end
+
 local function pack_matrix(values, block_size, max_code)
     local logical = #values
     local blocks = quantize.block_count(logical, block_size)
@@ -231,14 +226,7 @@ function Runtime:_pack(network_id, stream, precision, block_size)
         packed.fp16_matrices = m16
         return packed
     end
-    local max_code
-    if precision == 'fp8' then
-        max_code = nil
-    elseif precision == 'fp4' then
-        max_code = 15
-    else
-        max_code = 3
-    end
+    local max_code = max_code_for(precision)
     local per_layer = {}
     local all_payload = {}
     local all_scales, all_offsets = {}, {}
@@ -281,8 +269,6 @@ local function unpack_matrices(packed)
     end
     return matrices, packed.specials
 end
-
--- --------------------------------------------------------------- forward --
 
 -- Exact forward over decomposed matrices + interleaved specials. Mirrors the
 -- reference activation: value = prev + bias; if value <= threshold then dead.
@@ -349,6 +335,23 @@ function Runtime:_profile_key(network_id, precision, block_size)
     return ('%s|%s|%d'):format(network_id, precision, block_size)
 end
 
+-- Cached pack: return the packed entry for (weights, profile), packing and
+-- caching on miss. Ensures the pack cache exists.
+function Runtime:_cached_pack(network_id, weights, stream, precision, block_size)
+    if not self._pack_cache then self._pack_cache = {} end
+    local key = genome_key(weights, self:_profile_key(network_id, precision, block_size))
+    local packed = self._pack_cache[key]
+    if packed then
+        self.metrics['pack cache hits'] = (self.metrics['pack cache hits'] or 0) + 1
+        return packed
+    end
+    self.metrics['pack cache misses'] = (self.metrics['pack cache misses'] or 0) + 1
+    local p, err = self:_pack(network_id, stream, precision, block_size)
+    if not p then return nil, err end
+    self._pack_cache[key] = p
+    return p
+end
+
 -- CPU forward core: decode + (cached) pack + run into `out`. No allocation of
 -- a new output table; returns `out` (caller-owned).
 function Runtime:_forward_cpu(network_id, weights, inputs, out, precision, use_cache)
@@ -356,22 +359,13 @@ function Runtime:_forward_cpu(network_id, weights, inputs, out, precision, use_c
     if not stream then return nil, err end
     precision = precision or self.precision
     local block_size = self.block_size
-    local key, packed
-    if use_cache and not self._pack_cache then self._pack_cache = {} end
+    local packed, err
     if use_cache then
-        key = genome_key(weights, self:_profile_key(network_id, precision, block_size))
-        packed = self._pack_cache[key]
-        if packed then
-            self.metrics['pack cache hits'] = (self.metrics['pack cache hits'] or 0) + 1
-        end
-    end
-    if not packed then
+        packed, err = self:_cached_pack(network_id, weights, stream, precision, block_size)
+        if not packed then return nil, err end
+    else
         packed, err = self:_pack(network_id, stream, precision, block_size)
         if not packed then return nil, err end
-        if use_cache then
-            self.metrics['pack cache misses'] = (self.metrics['pack cache misses'] or 0) + 1
-            self._pack_cache[key] = packed
-        end
     end
     local out_count = self.networks[network_id].layers[#self.networks[network_id].layers]
     for i = 1, out_count do out[i] = 0 end
@@ -384,14 +378,21 @@ end
 
 -- Runtime:forward — convenience/debug path. On GPU this is a per-call
 -- pack+dispatch with no reuse; on CPU it may reuse the pack cache.
-function Runtime:forward(network_id, weights, inputs)
+-- Shared shutdown + unknown-network guard returns the error, or nil if alive.
+function Runtime:_check_alive(network_id)
     if self._shutdown then
-        return nil, errors.new('WORKER_SHUTDOWN', 'runtime is shut down', self.backend)
+        return errors.new('WORKER_SHUTDOWN', 'runtime is shut down', self.backend)
     end
     if not self.networks[network_id] then
-        return nil, errors.new('INVALID_ARGUMENT',
+        return errors.new('INVALID_ARGUMENT',
             ('unknown network %q'):format(tostring(network_id)), self.backend)
     end
+    return nil
+end
+
+function Runtime:forward(network_id, weights, inputs)
+    local guard_err = self:_check_alive(network_id)
+    if guard_err then return nil, guard_err end
     self.metrics['forward calls'] = (self.metrics['forward calls'] or 0) + 1
     if self.backend == 'gpu' then
         local ok, err = self:_forward_gpu(network_id, weights, inputs, nil, self.precision)
@@ -405,13 +406,8 @@ end
 -- Runtime:forward_into — caller-owned output buffer, no allocation, no
 -- retention. Returns `out`.
 function Runtime:forward_into(network_id, weights, inputs, out)
-    if self._shutdown then
-        return nil, errors.new('WORKER_SHUTDOWN', 'runtime is shut down', self.backend)
-    end
-    if not self.networks[network_id] then
-        return nil, errors.new('INVALID_ARGUMENT',
-            ('unknown network %q'):format(tostring(network_id)), self.backend)
-    end
+    local guard_err = self:_check_alive(network_id)
+    if guard_err then return nil, guard_err end
     if type(out) ~= 'table' then
         return nil, errors.new('INVALID_ARGUMENT', 'out must be a Lua table', self.backend)
     end
@@ -465,7 +461,6 @@ function Runtime:forward_batch(network_id, batch_items, in_desc, out_desc)
 
     -- CPU: decode each item's own genome and run. Packed entries are cached
     -- by (genome identity, profile) — the production caching path.
-    if not self._pack_cache then self._pack_cache = {} end
     local out_count = net.layers[#net.layers]
     local precision, block_size = self.precision, self.block_size
     for c, item in ipairs(batch_items) do
@@ -476,16 +471,8 @@ function Runtime:forward_batch(network_id, batch_items, in_desc, out_desc)
         end
         local stream, err = self:_decode_weights(item_weights, nil, item_net)
         if not stream then return nil, err end
-        local key = genome_key(item_weights, self:_profile_key(item_net, precision, block_size))
-        local packed = self._pack_cache[key]
-        if packed then
-            self.metrics['pack cache hits'] = (self.metrics['pack cache hits'] or 0) + 1
-        else
-            self.metrics['pack cache misses'] = (self.metrics['pack cache misses'] or 0) + 1
-            packed, err = self:_pack(item_net, stream, precision, block_size)
-            if not packed then return nil, err end
-            self._pack_cache[key] = packed
-        end
+        local packed, err = self:_cached_pack(item_net, item_weights, stream, precision, block_size)
+        if not packed then return nil, err end
         local inputs = {}
         local base = (c - 1) * in_stride
         for k = 1, in_stride do
@@ -501,8 +488,6 @@ function Runtime:forward_batch(network_id, batch_items, in_desc, out_desc)
     end
     return out_buf
 end
-
--- ------------------------------------------------------------- precision --
 
 -- Switch the active precision. Gates (N6): fp16/fp8 need the capability AND
 -- a passed corpus gate; fp4/fp2 need options.experimental == true (a passed
@@ -554,8 +539,6 @@ function Runtime:_invalidate_cache()
     self._pack_cache = {}
 end
 
--- ------------------------------------------------------------- capabilities --
-
 function Runtime:capabilities()
     return {
         backend = self.backend,
@@ -576,8 +559,6 @@ function Runtime:capabilities()
     }
 end
 
--- ---------------------------------------------------------------- shutdown --
-
 function Runtime:shutdown()
     if self._shutdown then return end
     if self.backend == 'gpu' and self._worker then
@@ -587,8 +568,6 @@ function Runtime:shutdown()
     end
     self._shutdown = true
 end
-
--- ---------------------------------------------------------------- gpu path --
 
 local function get_vulkan()
     local ok, v = pcall(require, 'nn.vulkan')
@@ -600,8 +579,8 @@ end
 local function vulkan_available()
     local v = get_vulkan()
     if not v or not v.can_load then return false end
-    local ok = pcall(v.can_load)
-    if not ok or not v.can_load() then return false end
+    local ok, loader_ok = pcall(v.can_load)
+    if not ok or not loader_ok then return false end
     local ctx, err = v.init()
     if ctx then
         pcall(v.destroy, ctx)
@@ -661,14 +640,7 @@ function Runtime:_pack_layer(network_id, stream, precision, block_size, li)
         specials[#specials + 1] = dec.specials[base + 2]
         specials[#specials + 1] = dec.specials[base + 3]
     end
-    local max_code
-    if precision == 'fp8' then
-        max_code = nil
-    elseif precision == 'fp4' then
-        max_code = 15
-    else
-        max_code = 3
-    end
+    local max_code = max_code_for(precision)
     local pm = pack_matrix(m.values, block_size, max_code)
     local item = {
         payload = pm.payload,
@@ -832,8 +804,6 @@ function Runtime:_forward_batch_gpu(network_id, batch_items, in_desc, out_desc)
     end
     return true
 end
-
--- ------------------------------------------------------------- construction --
 
 -- Backend resolution (once at init).
 local function resolve_backend(requested, deterministic)

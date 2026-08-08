@@ -9,7 +9,6 @@ local x_offsets = {1, 0, -1, 0}
 local y_offsets = {0, 1, 0, -1}
 
 function M.initCell(typ, x, y, direction, args)
-    -- Common attributes
     args           = args or {}
     local energy   = args.energy   or shares.CELL_INIT_ENERGY
     local minerals = args.minerals or shares.CELL_INIT_MINERALS
@@ -33,7 +32,7 @@ function M.initCell(typ, x, y, direction, args)
         parent,
     }
 
-    if typ == 3 or typ == 4 or typ == 6 then
+    if typ >= 3 and typ ~= 5 then
         local pos2idx = shares.pos2idx
         for i = 0, 2 do
             local dir = (direction + i + 2) % 4 + 1
